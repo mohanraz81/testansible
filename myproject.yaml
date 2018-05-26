@@ -13,7 +13,7 @@
     - name: Creating a security Group
       ec2_group:
         name: "{{ sgname }}"
-        description: my webserver sg
+ #       description: my webserver sg
         vpc_id: "{{ vpcid }}"
         region: "{{ region }}"
         rules:
