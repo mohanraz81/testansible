@@ -1,0 +1,92 @@
+- hosts: localhost
+  vars:
+    sgname: testsg
+    vpcid: vpc-eab48d91
+    region: us-east-1
+    kpname: my_keypair
+    instype: t2.micro
+    mysubnet: subnet-0328bc0c 
+    ami: ami-6871a115
+    instancename: testserver
+    machinecount: 2
+  tasks:
+    - name: Creating a security Group
+      ec2_group:
+        name: "{{ sgname }}"
+        description: my webserver sg
+        vpc_id: "{{ vpcid }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 80
+              - 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all on port 80 and 22
+      register: testsg_out
+    - debug:
+        var: testsg_out
+    - name: create key pair using key_material obtained using 'file' lookup plugin
+      ec2_key:
+        name: "{{ kpname }}"
+        key_material: "{{ lookup('file', '/home/ec2-user/environment/my-key.pub') }}"
+      register: my_keypair_out
+    - debug:
+        var: my_keypair_out
+    - ec2:
+        exact_count: "{{ machinecount }}"
+        count_tag:
+          Name: "{{ instancename }}"
+        region: "{{ region }}"
+        key_name: "{{ kpname }}"
+        instance_type: "{{ instype }}"
+        image: "{{ ami }}"
+        wait: yes
+        group: "{{testsg_out.group_name }}"
+        vpc_subnet_id: "{{ mysubnet }}"
+        assign_public_ip: yes
+        instance_tags:
+          Name: "{{ instancename }}"
+      register: instance_out
+    - debug:
+        var: instance_out
+    - add_host:
+        name: "{{ item.dns_name }}"
+        group: webservers
+      loop: "{{ instance_out.tagged_instances }}"
+    - name: waiting for machines
+      wait_for:
+        host: "{{ item.dns_name }}"
+        port: 22
+        delay: 5
+        timeout: 320
+        state: started
+      loop: "{{ instance_out.tagged_instances }}"
+- hosts: webservers
+  become: True
+  gather_facts: True
+  remote_user: ec2-user
+  vars:
+    ansible_ssh_private_key_file: /home/ec2-user/environment/my-key.pem
+  tasks:
+    - name: ensure apache is at the latest version
+      yum:
+        name: httpd
+        state: latest
+    - name: ensure apache is running
+      service:
+        name: httpd
+        state: started
+    - name: Templating the httpd.conf
+      template:
+        src: /home/ec2-user/environment/httpd.j2
+        dest: /etc/httpd/conf/httpd.conf
+      notify: restart apache
+    - copy:
+        src: files/index.html
+        dest: /var/www/html/index.html
+  handlers:
+    - name: restart apache
+      service:
+         name: httpd
+         state: restarted
